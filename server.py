@@ -1,10 +1,14 @@
-from flask import Flask, request, Response, flash, redirect
+from flask import Flask, render_template, request, Response, flash, redirect, url_for
 from werkzeug.utils import secure_filename
 import os
 import tensorflow as tf
 import cv2
 import numpy as np
 import main as m
+import psycopg2
+import credentials as cr
+import extract_features as ef
+from datetime import date, timedelta
 
 UPLOAD_FOLDER = './uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
@@ -15,7 +19,10 @@ model_val_loss = tf.keras.models.load_model('./nudityModel/min_val_loss_model.ep
 model_acc = tf.keras.models.load_model('./nudityModel/max_accuracy_model.epoch02-accuracy0.93')
 model_loss = tf.keras.models.load_model('./nudityModel/min_loss_model.epoch09-loss0.14')
 size = (50, 50)
-
+app.secret_key = cr.secret_key
+app.permanent_session_lifetime = timedelta(hours=cr.time)
+con = psycopg2.connect(host=cr.host, database=cr.db_name, user=cr.username, password=cr.password)
+cur = con.cursor()
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -93,7 +100,39 @@ def query():
     return Response(response='QUERY Request fail', status=404)
 
 
-        
+@app.route('/geturl')
+def geturl():
+    url = request.args.get('url')
+    print('URL: ', url)
+    query = f"select * from phishing_urls where url='{url}';"
+    cur.execute(query)
+    for i in cur.fetchall():
+        if i:
+            print('Found in DATABASE')
+            flash('PHISHING URL')
+            return redirect(url_for('phishing'))
+    result = ef.go(url)
+    ef.data = []
+    if result == 'PHISHING URL':
+        try:
+            query = "insert into phishing_urls(url,date) values('" + url + "',DATE '" + str(date.today()) + "');"
+            cur.execute(query)
+            con.commit()
+        except:
+            print('Some problem in entering the URL into database')
+    flash(result)
+    if result[0] == 'P':
+        return redirect(url_for('phishing'))
+    else:
+        return redirect(url_for('safe'))
+
+@app.route('/phishing')
+def phishing():
+    return '<h1>Phishing URL detected</h1>'
+
+@app.route('/safe')
+def safe():
+    return '<h1>Legitimate URL</h1>'
 
 if __name__ == '__main__':
     app.run()
